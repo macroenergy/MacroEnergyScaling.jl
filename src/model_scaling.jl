@@ -1,3 +1,9 @@
+@doc raw"""
+    scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
+
+Scale the coefficients and RHS of all constraints in the model `EP` using the scaling settings `scaling_settings`.
+This function creates an array of all constraints in `EP` and then broadcasts scale_constraint!(con_ref, scaling_settings) on the array.
+"""
 function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
     con_list = all_constraints(EP; include_variable_in_set_constraints=false)
     action_count = scale_constraint!.(con_list, Ref(scaling_settings));
@@ -8,6 +14,12 @@ function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=Scaling
     end
 end
 
+@doc raw"""
+    scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
+
+Scale the coefficients and RHS of all constraints in the model `EP` using the scaling settings `scaling_settings`.
+This function calls scale_constraint!(con_ref, scaling_settings) on each constraint in `constraint_list`.
+"""
 function scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_settings::ScalingSettings=ScalingSettings())
     action_count = 0
     for con_ref in constraint_list
@@ -20,6 +32,12 @@ function scale_constraints!(constraint_list::Vector{ConstraintRef}, scaling_sett
     end
 end
 
+@doc raw"""
+    scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
+
+Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`.
+`con_ref` is a JuMP constraint reference.
+"""
 function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
     action_count = 0
 
@@ -68,6 +86,14 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
     return action_count
 end
 
+@doc raw"""
+    scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
+
+Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`.
+First we check if we can scale the right-hand side constant without creating proxy variables.
+Afterwards, we iterate over the variable-coefficient pairs and scale them using proxy variables if necessary.
+The original constraint is then replaced with a new constraint using the scaled variable-coefficient pairs.
+"""
 function scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
     var_coeff_pairs = constraint_object(con_ref).func.terms
     new_var_coeff_pairs = OrderedDict{VariableRef, Float64}()
@@ -87,6 +113,11 @@ function scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::S
     replace_constraint!(con_ref, new_var_coeff_pairs, rhs_multiplier)
 end
 
+@doc raw"""
+    update_var_coeff_pair(var::VariableRef, coeff::Real, scaling_settings::ScalingSettings)
+
+Update the variable-coefficient pair `(var, coeff)` to be within the bounds specified in `scaling_settings`.
+"""
 function update_var_coeff_pair(var::VariableRef, coeff::Real, scaling_settings::ScalingSettings)
     multiplier = calc_coeff_multiplier(coeff, scaling_settings.coeff_lb, scaling_settings.coeff_ub)
     new_coeff = coeff * multiplier
@@ -115,6 +146,12 @@ function update_var_coeff_pair(var::VariableRef, coeff::Real, scaling_settings::
     end
 end
 
+@doc raw"""
+    prune_coefficients(new_coeff::Real, coeff::Real, multiplier::Real)
+
+If a new coefficient is close to 1.0 or -1.0, return 1.0 or -1.0 respectively.
+"close" is defined using the Julia `isapprox` function.
+"""
 function prune_coefficients(new_coeff::Real, coeff::Real, multiplier::Real)
     if new_coeff ≈ 1.0
         return (1.0, new_coeff / coeff)
@@ -124,6 +161,11 @@ function prune_coefficients(new_coeff::Real, coeff::Real, multiplier::Real)
     return (new_coeff, multiplier)
 end
 
+@doc raw"""
+    calc_rhs_multiplier(con_ref::ConstraintRef, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
+
+Calculate the multiplier to scale the right-hand side of the constraint `con_ref` to be within the bounds `rhs_lb` and `rhs_ub`.
+"""
 function calc_rhs_multiplier(con_ref::ConstraintRef, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
     rhs = normalized_rhs(con_ref)
     abs_rhs = abs(rhs)
@@ -140,6 +182,11 @@ function calc_rhs_multiplier(con_ref::ConstraintRef, rhs_lb::Real, rhs_ub::Real,
     end
 end
 
+@doc raw"""
+    calc_coeff_multiplier(coeff::Real, coeff_lb::Real, coeff_ub::Real)
+
+Calculate the multiplier to scale the coefficient `coeff` to be within the bounds `coeff_lb` and `coeff_ub`.
+"""
 function calc_coeff_multiplier(coeff::Real, coeff_lb::Real, coeff_ub::Real)
     abs_coeff = abs(coeff)
     if abs_coeff < coeff_lb
@@ -150,6 +197,12 @@ function calc_coeff_multiplier(coeff::Real, coeff_lb::Real, coeff_ub::Real)
     end
 end
 
+@doc raw"""
+    get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
+
+Check if a cached proxy variable exists for the variable `var` with a multiplier close to `multiplier`.
+If such a proxy variable exists, return it and its multiplier; otherwise, create a new proxy variable and return it.
+"""
 function get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
     cached_result = existing_proxy_var(var, multiplier, proxy_var_map, proxy_var_ratio_ub)
     if !isnothing(cached_result)
@@ -163,6 +216,12 @@ function get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{V
     return proxy_var, multiplier
 end
 
+@doc raw"""
+    existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
+
+Check if a proxy variable already exists for the variable `var` with a multiplier close to `multiplier`.
+If such a proxy variable exists, return it and its multiplier; otherwise, return nothing.
+"""
 function existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
     if !haskey(proxy_var_map, var)
         return nothing
@@ -175,6 +234,12 @@ function existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::D
     return nothing
 end
 
+@doc raw"""
+    make_proxy_var(var::VariableRef, multiplier::Real)
+
+Create a new proxy variable for the variable `var` with the given multiplier.
+The proxy and original variable are related by: `var == proxy_var * multiplier`.
+"""
 function make_proxy_var(var::VariableRef, multiplier::Real)
     model = var.model
     proxy_var = @variable(model)
@@ -188,6 +253,11 @@ function make_proxy_var(var::VariableRef, multiplier::Real)
     return proxy_var
 end
 
+@doc raw"""
+    replace_constraint!(con_ref::ConstraintRef, var_coeff_pairs=nothing, rhs_multiplier::Real=1.0)
+
+Replace the constraint `con_ref` with a new constraint with the given variable-coefficient pairs and right-hand side multiplier.
+"""
 function replace_constraint!(con_ref::ConstraintRef, var_coeff_pairs=nothing, rhs_multiplier::Real=1.0)
     con_obj = constraint_object(con_ref)
     con_name = name(con_ref)
@@ -202,6 +272,11 @@ function replace_constraint!(con_ref::ConstraintRef, var_coeff_pairs=nothing, rh
     return nothing
 end
 
+@doc raw"""
+    make_constraint(EP::Model, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs::MOI.AbstractScalarSet, con_name::AbstractString, rhs_multiplier::Real=1.0)
+
+Create a new constraint with the given variable-coefficient pairs, right-hand side, and name; then add it to the model `EP`.
+"""
 function make_constraint(EP::Model, var_coeff_pairs::AbstractDict{VariableRef, Float64}, rhs::MOI.AbstractScalarSet, con_name::AbstractString, rhs_multiplier::Real=1.0)
     expr = AffExpr()
     for (var, coeff) in var_coeff_pairs
@@ -220,6 +295,11 @@ function make_constraint(EP::Model, var_coeff_pairs::AbstractDict{VariableRef, F
     return new_con
 end
 
+@doc raw"""
+    parse_constraint_name(input::AbstractString)
+
+Parse the name of a constraint and return the name and indexes as a tuple.
+"""
 function parse_constraint_name(input::AbstractString)
     # Find the position of the opening bracket '['
     open_bracket_pos = findfirst(isequal('['), input)
