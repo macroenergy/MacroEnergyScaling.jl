@@ -22,7 +22,7 @@ authors = "Ruaridh Macdonald",
 sitename = "MacroEnergySystemsScaling.jl",
 format = Documenter.HTML(;
     prettyurls = get(ENV, "CI", "false") == "true",
-    canonical = "https://macroenergy.github.io/MacroEnergySystemsScaling.jl/stable",
+    canonical = "https://macroenergy.github.io/MacroEnergySystemsScaling.jl",
     sidebar_sitename = false,
     collapselevel = 1
 ),
@@ -34,11 +34,4 @@ pages = [p for p in pages]
 
 deploydocs(;
 repo = "github.com/macroenergy/MacroEnergySystemsScaling.jl.git",
-target = "build",
-branch = "gh-pages",
-devbranch = "develop",
-devurl = "dev",
-push_preview = true,
-versions = ["stable" => "v^", "v#.#.#", "dev" => "dev"],
-forcepush = false
 )
