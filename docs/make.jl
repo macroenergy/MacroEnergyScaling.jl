@@ -34,4 +34,5 @@ pages = [p for p in pages]
 
 deploydocs(;
 repo = "github.com/macroenergy/MacroEnergySystemsScaling.jl.git",
+devbranch = "main"
 )
