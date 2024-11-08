@@ -90,8 +90,9 @@ end
     scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
 
 Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`.
+
 First we check if we can scale the right-hand side constant without creating proxy variables.
-Afterwards, we iterate over the variable-coefficient pairs and scale them using proxy variables if necessary.
+Next, we iterate over the variable-coefficient pairs and scale them using proxy variables if necessary.
 The original constraint is then replaced with a new constraint using the scaled variable-coefficient pairs.
 """
 function scale_and_remake_constraint(con_ref::ConstraintRef, scaling_settings::ScalingSettings)
