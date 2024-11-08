@@ -1,7 +1,7 @@
 name = "MacroEnergySystemsScaling"
 uuid = "e07ba8b4-499e-4f54-a885-af58260c741f"
 authors = "Ruaridh Macdonald <rmacd@mit.edu>"
-version = "0.0.1"
+version = "0.0.2"
 
 [deps]
 JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
