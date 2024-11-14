@@ -31,10 +31,10 @@ end
 Extracts the scaling settings from a dictionary and returns a `ScalingSettings` object.
 """
 function get_scaling_settings(settings::Dict)::ScalingSettings
-    scaling_settings = Dict{String, Any}()
+    scaling_settings = Dict{Symbol, Any}()
     for scaling_setting in [String(x) for x in fieldnames(ScalingSettings)]
         if haskey(settings, scaling_setting)
-            scaling_settings[scaling_setting] = settings[scaling_setting]
+            scaling_settings[Symbol(scaling_setting)] = settings[scaling_setting]
         end
     end
     return ScalingSettings(; scaling_settings...)
