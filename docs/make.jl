@@ -1,8 +1,8 @@
 using Documenter
-using MacroEnergySystemsScaling
+using MacroEnergyScaling
 using OrderedCollections
 
-DocMeta.setdocmeta!(MacroEnergySystemsScaling, :DocTestSetup, :(using MacroEnergySystemsScaling); recursive = true)
+DocMeta.setdocmeta!(MacroEnergyScaling, :DocTestSetup, :(using MacroEnergyScaling); recursive = true)
 
 pages = OrderedDict(
     "Introduction" => "index.md",
@@ -17,12 +17,12 @@ pages = OrderedDict(
 # ====================
 
 makedocs(;
-modules = [MacroEnergySystemsScaling],
+modules = [MacroEnergyScaling],
 authors = "Ruaridh Macdonald",
-sitename = "MacroEnergySystemsScaling.jl",
+sitename = "MacroEnergyScaling.jl",
 format = Documenter.HTML(;
     prettyurls = get(ENV, "CI", "false") == "true",
-    canonical = "https://macroenergy.github.io/MacroEnergySystemsScaling.jl",
+    canonical = "https://macroenergy.github.io/MacroEnergyScaling.jl",
     sidebar_sitename = false,
     collapselevel = 1
 ),
@@ -33,6 +33,6 @@ pages = [p for p in pages]
 # ===========================
 
 deploydocs(;
-repo = "github.com/macroenergy/MacroEnergySystemsScaling.jl.git",
+repo = "github.com/macroenergy/MacroEnergyScaling.jl.git",
 devbranch = "main"
 )

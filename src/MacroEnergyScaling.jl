@@ -1,4 +1,4 @@
-module MacroEnergySystemsScaling
+module MacroEnergyScaling
 
 export scale_constraints!
 export get_scaling_settings

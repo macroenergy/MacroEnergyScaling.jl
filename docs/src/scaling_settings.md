@@ -1,6 +1,6 @@
 # Model Scaling Settings
 
 ```@autodocs
-Modules = [MacroEnergySystemsScaling]
+Modules = [MacroEnergyScaling]
 Pages = ["scaling_settings.jl"]
 ```
