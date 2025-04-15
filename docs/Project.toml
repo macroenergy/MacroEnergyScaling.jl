@@ -1,4 +1,4 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
-MacroEnergyScaling = "e07ba8b4-499e-4f54-a885-af58260c741f"
+MacroEnergyScaling = "824dc6dc-8db5-4e55-923f-6cabbd6cfcd5"
 OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
