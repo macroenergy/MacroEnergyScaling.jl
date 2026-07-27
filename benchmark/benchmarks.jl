@@ -49,6 +49,31 @@ function build_dense_proxy_scaling_model(n::Integer, terms_per_constraint::Integ
     return model
 end
 
+function build_in_range_objective_model(n::Integer, model=Model())
+    @variable(model, x[1:n])
+    @objective(model, Min, sum(2.0 * x[i] for i in 1:n))
+    return model
+end
+
+function build_mixed_objective_model(n::Integer, model=Model())
+    @variable(model, x[1:n])
+    @variable(model, y[1:n])
+    @objective(model, Min, sum(1.0e9 * x[i] + 1.0e-9 * y[i] for i in 1:n))
+    return model
+end
+
+function build_proxy_objective_model(n::Integer, model=Model())
+    @variable(model, x[1:n])
+    @objective(model, Min, sum(1.0e9 * x[i] for i in 1:n))
+    return model
+end
+
+function build_uniform_objective_model(n::Integer, model=Model())
+    @variable(model, x[1:n])
+    @objective(model, Min, sum(1.0e8 * x[i] for i in 1:n))
+    return model
+end
+
 function build_direct_model()
     model = direct_model(HiGHS.Optimizer())
     set_silent(model)
@@ -66,6 +91,11 @@ function scaling_benchmarks(n::Integer=100, terms_per_constraint::Integer=50)
     suite["direct in-place scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_in_place_scaling_model($n, build_direct_model()); settings = MES.ScalingSettings()) evals=1
     suite["direct dense in-place scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_dense_in_place_scaling_model($n, $terms_per_constraint, build_direct_model()); settings = MES.ScalingSettings()) evals=1
     suite["direct proxy scaling"] = @benchmarkable MES.scale_constraints!(model, settings) setup=(model = build_proxy_scaling_model($n, build_direct_model()); settings = MES.ScalingSettings()) evals=1
+    suite["objective already in range"] = @benchmarkable MES.scale_objective!(model, settings) setup=(model = build_in_range_objective_model($n); settings = MES.ScalingSettings()) evals=1
+    suite["objective mixed scaling"] = @benchmarkable MES.scale_objective!(model, settings) setup=(model = build_mixed_objective_model($n); settings = MES.ScalingSettings()) evals=1
+    suite["objective proxy scaling"] = @benchmarkable MES.scale_objective!(model, settings) setup=(model = build_proxy_objective_model($n); settings = MES.ScalingSettings()) evals=1
+    suite["objective uniform scaling"] = @benchmarkable MES.scale_objective!(model, settings) setup=(model = build_uniform_objective_model($n); settings = MES.ScalingSettings(scale_objective_uniformly = true)) evals=1
+    suite["objective hybrid uniform scaling"] = @benchmarkable MES.scale_objective!(model, settings) setup=(model = build_mixed_objective_model($n); settings = MES.ScalingSettings(scale_objective_uniformly = true)) evals=1
     return suite
 end
 

@@ -1,4 +1,4 @@
-# Model Scaling Settings
+# Scaling Settings
 
 ```@autodocs
 Modules = [MacroEnergyScaling]

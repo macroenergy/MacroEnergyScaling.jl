@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this scaling library, please use the citation below"
+authors:
+- family-names: "Macdonald"
+  given-names: "Ruaridh"
+  orcid: "https://orcid.org/0000-0001-9034-6635"
+title: "MacroEnergy.jl"
+version: 0.4.0
+date-released: 2026-07-24
+url: "https://github.com/macroenergy/MacroEnergyScaling.jl"

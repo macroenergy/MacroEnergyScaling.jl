@@ -1,9 +1,12 @@
 # Benchmarks
 
-This directory contains microbenchmarks for the constraint-scaling paths. Model
-construction happens in BenchmarkTools' `setup` phase, so timings measure only
-`scale_constraints!`. The suite includes caching-model and HiGHS direct-model
-cases, plus dense in-place and proxy-scaling cases.
+This directory contains microbenchmarks for constraint and objective scaling.
+Model construction happens in BenchmarkTools' `setup` phase, so timings measure
+only `scale_constraints!` or `scale_objective!`. The suite includes caching-model
+and HiGHS direct-model constraint cases, dense constraints, and objective no-op,
+mixed-scale, and proxy-scaling cases.
+The objective cases also compare proxy-only scaling with opt-in uniform and
+hybrid uniform scaling.
 
 From the repository root, initialize the dedicated benchmark environment once:
 

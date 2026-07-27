@@ -1,6 +1,6 @@
-# Model Scaling Functions
+# Constraint Scaling Functions
 
 ```@autodocs
 Modules = [MacroEnergyScaling]
-Pages = ["model_scaling.jl"]
+Pages = ["constraint_scaling.jl", "scaling_utilities.jl"]
 ```

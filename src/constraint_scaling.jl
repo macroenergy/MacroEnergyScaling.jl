@@ -1,3 +1,5 @@
+# Constraint scaling workflow
+
 @doc raw"""
     scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
 
@@ -93,7 +95,12 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
 
     con_obj = constraint_object(con_ref)
     rhs = normalized_rhs(con_ref)
-    has_nonzero_coefficient, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, rhs)
+    con_obj, has_nonzero_coefficient, min_coefficient, max_coefficient = constraint_scaling_preflight!(
+        con_ref,
+        con_obj,
+        rhs,
+        scaling_settings.constraint_min_coeff,
+    )
     if !has_nonzero_coefficient
         return nothing
     end
@@ -120,7 +127,7 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
         set_normalized_rhs(con_ref, rhs * min_ratio)
     # Else we'll update the constraint with proxy variables to scale the coefficients one-by-one
     else
-        scale_and_update_constraint!(con_ref, con_obj, rhs, scaling_settings)
+        scale_and_update_constraint!(con_ref, con_obj, rhs, min_coefficient, max_coefficient, scaling_settings)
     end
     return nothing
 end
@@ -142,7 +149,13 @@ function scale_constraint!(con_ref::ConstraintRef{<:AbstractModel,<:MOI.Constrai
         end
         return nothing
     end
-    if multiplier != 1.0 || interval_coefficients_need_scaling(con_obj, multiplier, scaling_settings)
+    con_obj, coefficients_need_scaling = interval_scaling_preflight!(
+        con_ref,
+        con_obj,
+        multiplier,
+        scaling_settings,
+    )
+    if multiplier != 1.0 || coefficients_need_scaling
         scale_and_update_terms!(con_ref, con_obj, multiplier, scaling_settings)
     end
     if multiplier != 1.0
@@ -214,6 +227,104 @@ function scale_constraint_terms!(con_ref::ConstraintRef, terms, multiplier::Real
 end
 
 @doc raw"""
+    constraint_scaling_preflight!(con_ref::ConstraintRef, con_obj, rhs::Real, constraint_min_coeff::Real)
+
+Inspect the terms in `con_obj` once. If `constraint_min_coeff` is positive,
+remove terms with smaller nonzero coefficient magnitudes while collecting the
+extrema of the retained terms and `rhs`. Return the current constraint object,
+whether a nonzero coefficient or RHS was found, and the extrema.
+"""
+function constraint_scaling_preflight!(con_ref::ConstraintRef, con_obj, rhs::Real, constraint_min_coeff::Real)
+    if constraint_min_coeff == 0.0
+        has_nonzero_coefficient, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, rhs)
+        return con_obj, has_nonzero_coefficient, min_coefficient, max_coefficient
+    end
+
+    variables_to_prune = nothing
+    min_coefficient = Inf
+    max_coefficient = 0.0
+    has_nonzero_coefficient = false
+    for (variable, coefficient) in con_obj.func.terms
+        magnitude = abs(coefficient)
+        if magnitude == 0.0
+            continue
+        elseif magnitude < constraint_min_coeff
+            isnothing(variables_to_prune) && (variables_to_prune = VariableRef[])
+            push!(variables_to_prune, variable)
+            continue
+        elseif !has_nonzero_coefficient
+            has_nonzero_coefficient = true
+            min_coefficient = magnitude
+            max_coefficient = magnitude
+        elseif magnitude < min_coefficient
+            min_coefficient = magnitude
+        elseif magnitude > max_coefficient
+            max_coefficient = magnitude
+        end
+    end
+    rhs_magnitude = abs(rhs)
+    if rhs_magnitude > 0.0
+        if !has_nonzero_coefficient
+            has_nonzero_coefficient = true
+            min_coefficient = rhs_magnitude
+            max_coefficient = rhs_magnitude
+        elseif rhs_magnitude < min_coefficient
+            min_coefficient = rhs_magnitude
+        elseif rhs_magnitude > max_coefficient
+            max_coefficient = rhs_magnitude
+        end
+    end
+    if !isnothing(variables_to_prune)
+        set_zero_coefficients!(con_ref, variables_to_prune)
+        con_obj = constraint_object(con_ref)
+    end
+    return con_obj, has_nonzero_coefficient, min_coefficient, max_coefficient
+end
+
+@doc raw"""
+    interval_scaling_preflight!(con_ref::ConstraintRef, con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+
+Inspect interval constraint terms once, removing terms below
+`constraint_min_coeff` and determining whether any retained term still needs
+scaling after `multiplier` is applied. Return the current constraint object and
+whether coefficient scaling is needed.
+"""
+function interval_scaling_preflight!(con_ref::ConstraintRef, con_obj, multiplier::Real, scaling_settings::ScalingSettings)
+    constraint_min_coeff = scaling_settings.constraint_min_coeff
+    if constraint_min_coeff == 0.0
+        return con_obj, interval_coefficients_need_scaling(con_obj, multiplier, scaling_settings)
+    end
+
+    variables_to_prune = nothing
+    coefficients_need_scaling = false
+    for (variable, coefficient) in con_obj.func.terms
+        magnitude = abs(coefficient)
+        if magnitude == 0.0
+            continue
+        elseif magnitude < constraint_min_coeff
+            isnothing(variables_to_prune) && (variables_to_prune = VariableRef[])
+            push!(variables_to_prune, variable)
+        elseif !(scaling_settings.coeff_lb <= magnitude * multiplier <= scaling_settings.coeff_ub)
+            coefficients_need_scaling = true
+        end
+    end
+    if !isnothing(variables_to_prune)
+        set_zero_coefficients!(con_ref, variables_to_prune)
+        con_obj = constraint_object(con_ref)
+    end
+    return con_obj, coefficients_need_scaling
+end
+
+function set_zero_coefficients!(con_ref::ConstraintRef, variables::Vector{VariableRef})
+    if length(variables) == 1
+        set_normalized_coefficient(con_ref, only(variables), 0.0)
+    else
+        set_normalized_coefficient(fill(con_ref, length(variables)), variables, fill(0.0, length(variables)))
+    end
+    return nothing
+end
+
+@doc raw"""
     nonzero_coefficient_extrema(con_obj, rhs)
 
 Return whether a nonzero coefficient was found, followed by the smallest and
@@ -253,7 +364,7 @@ function nonzero_coefficient_extrema(con_obj, rhs)
 end
 
 @doc raw"""
-    scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, scaling_settings::ScalingSettings)
+    scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, min_coefficient::Real, max_coefficient::Real, scaling_settings::ScalingSettings)
 
 Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`
 without changing its `ConstraintRef`.
@@ -262,10 +373,10 @@ First we check if we can scale the right-hand side constant without creating pro
 Next, we iterate over the variable-coefficient pairs and scale them using proxy variables if necessary.
 The scaled variable-coefficient pairs are then applied to the original constraint in place.
 """
-function scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, scaling_settings::ScalingSettings)
+function scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, min_coefficient::Real, max_coefficient::Real, scaling_settings::ScalingSettings)
     # First we want to check if we need to scale the RHS constant
     # We'd like to do this without making it impossible to scale some coefficients with proxy variables
-    rhs_multiplier = calc_rhs_multiplier(con_obj, rhs, scaling_settings.rhs_lb, scaling_settings.rhs_ub, scaling_settings.coeff_lb, scaling_settings.coeff_ub)
+    rhs_multiplier = calc_rhs_multiplier(rhs, scaling_settings.rhs_lb, scaling_settings.rhs_ub, scaling_settings.coeff_lb, scaling_settings.coeff_ub, min_coefficient, max_coefficient)
 
     scale_and_update_terms!(con_ref, con_obj, rhs_multiplier, scaling_settings)
     if rhs_multiplier != 1.0
@@ -289,7 +400,14 @@ function scale_and_update_terms!(con_ref::ConstraintRef, con_obj, multiplier::Re
             new_var_coeff_pairs[var] = coeff * multiplier
             continue
         end
-        (updated_var, updated_coeff) = update_var_coeff_pair(var, coeff * multiplier, scaling_settings)
+        updated_var, updated_coeff = scaled_var_coeff_pair(
+            var,
+            coeff * multiplier,
+            scaling_settings.coeff_lb,
+            scaling_settings.coeff_ub,
+            scaling_settings.constraint_max_proxy_depth,
+            scaling_settings,
+        )
         new_var_coeff_pairs[updated_var] = updated_coeff
     end
     update_scaled_terms!(con_ref, var_coeff_pairs, new_var_coeff_pairs)
@@ -327,140 +445,25 @@ function update_scaled_terms!(con_ref::ConstraintRef, original_var_coeff_pairs, 
 end
 
 @doc raw"""
-    update_var_coeff_pair(var::VariableRef, coeff::Real, scaling_settings::ScalingSettings)
-
-Update the variable-coefficient pair `(var, coeff)` to be within the bounds specified in `scaling_settings`.
-"""
-function update_var_coeff_pair(var::VariableRef, coeff::Real, scaling_settings::ScalingSettings)
-    multiplier = calc_coeff_multiplier(coeff, scaling_settings.coeff_lb, scaling_settings.coeff_ub)
-    new_coeff = coeff * multiplier
-    if abs(new_coeff) < scaling_settings.min_coeff
-        return (var, 0.0)
-    end
-    # Get a new or cached proxy variable, and new or cached multiplier
-    (proxy_var, multiplier) = get_proxy_var(var, multiplier, scaling_settings.proxy_var_map, scaling_settings.proxy_var_ratio_ub)
-    new_coeff = coeff * multiplier
-    # Tidy up near-unity coefficients, in case that allows a speedup
-    (new_coeff, multiplier) = prune_coefficients(new_coeff, coeff, multiplier)
-    # If the new coefficient is within bounds, we're done
-    if scaling_settings.coeff_lb <= abs(new_coeff) <= scaling_settings.coeff_ub
-        return (proxy_var, new_coeff)
-    end
-    # Else, the new coefficient is too large or too small
-    # If recursion is allowed, we repeate the process with the new coefficient
-    if scaling_settings.allow_recursion
-        return update_var_coeff_pair(proxy_var, new_coeff, scaling_settings)
-    # Else, we return the current proxy variable and coefficient
-    # as the best we can do given the user's coefficient range.
-    # In the future we could try to balance this better with
-    # the RHS scaling
-    else
-        return (proxy_var, new_coeff)
-    end
-end
-
-@doc raw"""
-    prune_coefficients(new_coeff::Real, coeff::Real, multiplier::Real)
-
-If a new coefficient is close to 1.0 or -1.0, return 1.0 or -1.0 respectively.
-"close" is defined using the Julia `isapprox` function.
-"""
-function prune_coefficients(new_coeff::Real, coeff::Real, multiplier::Real)
-    if new_coeff ≈ 1.0
-        return (1.0, new_coeff / coeff)
-    elseif new_coeff ≈ -1.0
-        return (-1.0, new_coeff / coeff)
-    end
-    return (new_coeff, multiplier)
-end
-
-@doc raw"""
     calc_rhs_multiplier(con_obj, rhs::Real, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
 
 Calculate the multiplier that keeps `rhs` compatible with the coefficient bounds in `con_obj` and the RHS bounds `rhs_lb` and `rhs_ub`.
 """
 function calc_rhs_multiplier(con_obj, rhs::Real, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real)
+    _, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, rhs)
+    return calc_rhs_multiplier(rhs, rhs_lb, rhs_ub, coeff_lb, coeff_ub, min_coefficient, max_coefficient)
+end
+
+function calc_rhs_multiplier(rhs::Real, rhs_lb::Real, rhs_ub::Real, coeff_lb::Real, coeff_ub::Real, min_coefficient::Real, max_coefficient::Real)
     iszero(rhs) && return 1.0
     abs_rhs = abs(rhs)
     if rhs_lb <= abs_rhs <= rhs_ub
         return 1.0
     end
-    _, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, rhs)
     if abs_rhs > rhs_ub
         return max(1.0 / abs_rhs, coeff_lb / coeff_ub / min_coefficient)
     end
     if abs_rhs < rhs_lb
         return min(1.0 / abs_rhs, coeff_ub / coeff_lb / max_coefficient)
     end
-end
-
-@doc raw"""
-    calc_coeff_multiplier(coeff::Real, coeff_lb::Real, coeff_ub::Real)
-
-Calculate the multiplier to scale the coefficient `coeff` to be within the bounds `coeff_lb` and `coeff_ub`.
-"""
-function calc_coeff_multiplier(coeff::Real, coeff_lb::Real, coeff_ub::Real)
-    abs_coeff = abs(coeff)
-    if abs_coeff < coeff_lb
-        return minimum([coeff_ub, 1.0 / abs_coeff]) # We could shift the target value (i.e. 1.0 here)
-    end
-    if abs_coeff > coeff_ub
-        return maximum([coeff_lb, 1.0 / abs_coeff])
-    end
-end
-
-@doc raw"""
-    get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
-
-Check if a cached proxy variable exists for the variable `var` with a multiplier close to `multiplier`.
-If such a proxy variable exists, return it and its multiplier; otherwise, create a new proxy variable and return it.
-"""
-function get_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
-    cached_result = existing_proxy_var(var, multiplier, proxy_var_map, proxy_var_ratio_ub)
-    if !isnothing(cached_result)
-        return cached_result
-    end
-    proxy_var = make_proxy_var(var, multiplier)
-    if !haskey(proxy_var_map, var)
-        proxy_var_map[var] = Vector{Tuple{VariableRef, Float64}}()
-    end
-    push!(proxy_var_map[var], (proxy_var, multiplier))
-    return proxy_var, multiplier
-end
-
-@doc raw"""
-    existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
-
-Check if a proxy variable already exists for the variable `var` with a multiplier close to `multiplier`.
-If such a proxy variable exists, return it and its multiplier; otherwise, return nothing.
-"""
-function existing_proxy_var(var::VariableRef, multiplier::Real, proxy_var_map::Dict{VariableRef, Vector{Tuple{VariableRef, Float64}}}, proxy_var_ratio_ub::Real)
-    if !haskey(proxy_var_map, var)
-        return nothing
-    end
-    for (proxy_var, cached_multiplier) in proxy_var_map[var]
-        if 1 / proxy_var_ratio_ub < multiplier / cached_multiplier < proxy_var_ratio_ub
-            return proxy_var, cached_multiplier
-        end
-    end
-    return nothing
-end
-
-@doc raw"""
-    make_proxy_var(var::VariableRef, multiplier::Real)
-
-Create a new proxy variable for the variable `var` with the given multiplier.
-The proxy and original variable are related by: `var == proxy_var * multiplier`.
-"""
-function make_proxy_var(var::VariableRef, multiplier::Real)
-    model = var.model
-    proxy_var = @variable(model)
-    if has_lower_bound(var)
-        set_lower_bound(proxy_var, lower_bound(var) * multiplier)
-    end
-    if has_upper_bound(var)
-        set_upper_bound(proxy_var, upper_bound(var) * multiplier)
-    end
-    @constraint(model, var == proxy_var * multiplier)
-    return proxy_var
 end

@@ -1,4 +1,5 @@
 using Documenter
+using DocumenterMermaid
 using MacroEnergyScaling
 using OrderedCollections
 
@@ -7,7 +8,8 @@ DocMeta.setdocmeta!(MacroEnergyScaling, :DocTestSetup, :(using MacroEnergyScalin
 pages = OrderedDict(
     "Introduction" => "index.md",
     "Reference" => [
-        "Model Scaling" => "model_scaling.md",
+        "Constraint Scaling" => "model_scaling.md",
+        "Objective Scaling" => "objective_scaling.md",
         "Scaling Settings" => "scaling_settings.md",
     ]
     # "Examples" => "examples.md",
