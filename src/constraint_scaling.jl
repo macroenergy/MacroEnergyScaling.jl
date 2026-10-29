@@ -4,6 +4,9 @@
     scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
 
 Scale the scalar-affine constraints in the model `EP` using the scaling settings `scaling_settings`.
+Cumulative uniform row multipliers are recorded in
+`scaling_settings.constraint_scaling_factors`; missing entries mean `1.0`.
+The return value remains `nothing`.
 """
 function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
     validate_scaling_settings(scaling_settings)
@@ -95,18 +98,14 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
 
     con_obj = constraint_object(con_ref)
     rhs = normalized_rhs(con_ref)
-    con_obj, has_nonzero_coefficient, min_coefficient, max_coefficient = constraint_scaling_preflight!(
-        con_ref,
+    has_nonzero_coefficient, min_coefficient, max_coefficient, variables_to_prune = constraint_scaling_preflight(
         con_obj,
         rhs,
         scaling_settings.constraint_min_coeff,
     )
-    if !has_nonzero_coefficient
-        return nothing
-    end
-
-    # If all the coefficients are within the bounds, we don't need to do anything
-    if coeff_lb <= min_coefficient && max_coefficient <= coeff_ub
+    # Apply any requested pruning even when no row scaling is needed.
+    if !has_nonzero_coefficient || (coeff_lb <= min_coefficient && max_coefficient <= coeff_ub)
+        apply_constraint_pruning!(con_ref, con_obj, variables_to_prune)
         return nothing
     end
 
@@ -118,16 +117,22 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
     # If some coefficients are too large, and none too small
     # and dividing by max_ratio will not make any coefficients less than coeff_lb
     if max_ratio > 1 && min_ratio < 1 && min_ratio * max_ratio < 1
+        cumulative = validated_constraint_scaling_factor(con_ref, 1.0 / max_ratio, scaling_settings)
+        con_obj = apply_constraint_pruning!(con_ref, con_obj, variables_to_prune)
         scale_constraint_terms!(con_ref, con_obj.func.terms, 1.0 / max_ratio)
         set_normalized_rhs(con_ref, rhs / max_ratio)
+        scaling_settings.constraint_scaling_factors[con_ref] = cumulative
     # Else-if some coefficients are too small, and none too large
     # and multiplying by min_ratio will not make any coefficients greater than coeff_ub
     elseif min_ratio > 1 && max_ratio < 1 && max_ratio * min_ratio < 1
+        cumulative = validated_constraint_scaling_factor(con_ref, min_ratio, scaling_settings)
+        con_obj = apply_constraint_pruning!(con_ref, con_obj, variables_to_prune)
         scale_constraint_terms!(con_ref, con_obj.func.terms, min_ratio)
         set_normalized_rhs(con_ref, rhs * min_ratio)
+        scaling_settings.constraint_scaling_factors[con_ref] = cumulative
     # Else we'll update the constraint with proxy variables to scale the coefficients one-by-one
     else
-        scale_and_update_constraint!(con_ref, con_obj, rhs, min_coefficient, max_coefficient, scaling_settings)
+        scale_and_update_constraint!(con_ref, con_obj, rhs, min_coefficient, max_coefficient, scaling_settings, variables_to_prune)
     end
     return nothing
 end
@@ -149,6 +154,10 @@ function scale_constraint!(con_ref::ConstraintRef{<:AbstractModel,<:MOI.Constrai
         end
         return nothing
     end
+    cumulative = 1.0
+    if multiplier != 1.0
+        cumulative = validated_constraint_scaling_factor(con_ref, multiplier, scaling_settings)
+    end
     con_obj, coefficients_need_scaling = interval_scaling_preflight!(
         con_ref,
         con_obj,
@@ -160,8 +169,20 @@ function scale_constraint!(con_ref::ConstraintRef{<:AbstractModel,<:MOI.Constrai
     end
     if multiplier != 1.0
         set_interval_bounds!(con_ref, interval.lower * multiplier, interval.upper * multiplier)
+        scaling_settings.constraint_scaling_factors[con_ref] = cumulative
     end
     return nothing
+end
+
+# Validate before applying row scaling; commit after the updates succeed.
+# Called only for non-unit multipliers, keeping unchanged/proxy-only rows cheap.
+function validated_constraint_scaling_factor(con_ref::ConstraintRef, multiplier::Float64, scaling_settings::ScalingSettings)
+    factors = scaling_settings.constraint_scaling_factors
+    cumulative = get(factors, con_ref, 1.0) * multiplier
+    if !isfinite(cumulative) || cumulative <= 0.0
+        error("The cumulative constraint scaling factor must remain finite and positive.")
+    end
+    return cumulative
 end
 
 @doc raw"""
@@ -227,17 +248,15 @@ function scale_constraint_terms!(con_ref::ConstraintRef, terms, multiplier::Real
 end
 
 @doc raw"""
-    constraint_scaling_preflight!(con_ref::ConstraintRef, con_obj, rhs::Real, constraint_min_coeff::Real)
+    constraint_scaling_preflight(con_obj, rhs::Real, constraint_min_coeff::Real)
 
-Inspect the terms in `con_obj` once. If `constraint_min_coeff` is positive,
-remove terms with smaller nonzero coefficient magnitudes while collecting the
-extrema of the retained terms and `rhs`. Return the current constraint object,
-whether a nonzero coefficient or RHS was found, and the extrema.
+Inspect terms once without changing the row. Return whether a nonzero coefficient
+or RHS was found, retained extrema, and variables to prune after factor validation.
 """
-function constraint_scaling_preflight!(con_ref::ConstraintRef, con_obj, rhs::Real, constraint_min_coeff::Real)
+function constraint_scaling_preflight(con_obj, rhs::Real, constraint_min_coeff::Real)
     if constraint_min_coeff == 0.0
         has_nonzero_coefficient, min_coefficient, max_coefficient = nonzero_coefficient_extrema(con_obj, rhs)
-        return con_obj, has_nonzero_coefficient, min_coefficient, max_coefficient
+        return has_nonzero_coefficient, min_coefficient, max_coefficient, nothing
     end
 
     variables_to_prune = nothing
@@ -274,11 +293,15 @@ function constraint_scaling_preflight!(con_ref::ConstraintRef, con_obj, rhs::Rea
             max_coefficient = rhs_magnitude
         end
     end
+    return has_nonzero_coefficient, min_coefficient, max_coefficient, variables_to_prune
+end
+
+function apply_constraint_pruning!(con_ref::ConstraintRef, con_obj, variables_to_prune)
     if !isnothing(variables_to_prune)
         set_zero_coefficients!(con_ref, variables_to_prune)
-        con_obj = constraint_object(con_ref)
+        return constraint_object(con_ref)
     end
-    return con_obj, has_nonzero_coefficient, min_coefficient, max_coefficient
+    return con_obj
 end
 
 @doc raw"""
@@ -364,7 +387,7 @@ function nonzero_coefficient_extrema(con_obj, rhs)
 end
 
 @doc raw"""
-    scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, min_coefficient::Real, max_coefficient::Real, scaling_settings::ScalingSettings)
+    scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, min_coefficient::Real, max_coefficient::Real, scaling_settings::ScalingSettings, variables_to_prune=nothing)
 
 Scale the coefficients and RHS of the constraint `con_ref` using the scaling settings `scaling_settings`
 without changing its `ConstraintRef`.
@@ -373,14 +396,20 @@ First we check if we can scale the right-hand side constant without creating pro
 Next, we iterate over the variable-coefficient pairs and scale them using proxy variables if necessary.
 The scaled variable-coefficient pairs are then applied to the original constraint in place.
 """
-function scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, min_coefficient::Real, max_coefficient::Real, scaling_settings::ScalingSettings)
+function scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real, min_coefficient::Real, max_coefficient::Real, scaling_settings::ScalingSettings, variables_to_prune=nothing)
     # First we want to check if we need to scale the RHS constant
     # We'd like to do this without making it impossible to scale some coefficients with proxy variables
     rhs_multiplier = calc_rhs_multiplier(rhs, scaling_settings.rhs_lb, scaling_settings.rhs_ub, scaling_settings.coeff_lb, scaling_settings.coeff_ub, min_coefficient, max_coefficient)
 
+    cumulative = 1.0
+    if rhs_multiplier != 1.0
+        cumulative = validated_constraint_scaling_factor(con_ref, rhs_multiplier, scaling_settings)
+    end
+    con_obj = apply_constraint_pruning!(con_ref, con_obj, variables_to_prune)
     scale_and_update_terms!(con_ref, con_obj, rhs_multiplier, scaling_settings)
     if rhs_multiplier != 1.0
         set_normalized_rhs(con_ref, rhs * rhs_multiplier)
+        scaling_settings.constraint_scaling_factors[con_ref] = cumulative
     end
     return nothing
 end

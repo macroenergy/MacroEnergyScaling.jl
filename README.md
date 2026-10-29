@@ -18,6 +18,14 @@ To avoid creating unnecessary proxies, the package can reuse a proxy whose multi
 
 For a fully scaled model, call `scale_objective!` before `scale_constraints!` with the same `ScalingSettings` object. Objective coefficients with magnitude below `objective_min_coeff` are dropped before scaling; its default is `0.0`, so objective scaling preserves the objective exactly by default. Set `scale_objective_uniformly = true` to first apply a uniform multiplier that reduces proxy use. This scales solver-reported objective values and constraint duals; recover an unscaled objective value with `objective_value(model) / settings.objective_scaling_factor`. The factor accumulates across calls using the same settings object for one objective workflow, and cannot restore terms removed by `objective_min_coeff`.
 
+Uniform constraint-row multipliers are retained in
+`settings.constraint_scaling_factors`, keyed by the original constraint references.
+Missing entries mean `1.0`; proxy substitutions alone do not change the factor.
+For a solver dual `dual(con)`, recover its original units with
+`dual(con) * get(settings.constraint_scaling_factors, con, 1.0) / settings.objective_scaling_factor`.
+Keep the same settings object across scaling calls to accumulate factors. Scaling
+functions still return `nothing`.
+
 Note, this package does not reformulate the model, it only rescales it. Better performance and numerical stability can be achieved by reformulating the model. This can achieve the same re-scaled coefficients and right-hand sides but without the need for proxy variables and additional constraints.
 
 Currently, MacroEnergyScaling supports scalar-affine `<=`, `>=`, `==`, and non-wide two-sided interval constraints. By default, it errors for a wide interval whose lower and upper bounds require different scaling multipliers. Set `scale_wideintervals = false` in `ScalingSettings` to skip wide intervals, or break them into two one-sided constraints. It also errors by default if the model contains other constraint types; set `scale_nonaffine = false` to skip them. Constraints are processed in JuMP's constraint-type order; when proxy variables are used, this can affect which proxies are reused and therefore the auxiliary formulation, without changing the feasible region.
