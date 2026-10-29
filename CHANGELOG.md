@@ -7,6 +7,12 @@ project follows Julia package versioning through `Project.toml` releases.
 
 ## 0.4.1 - 2026-10-29
 
+### Fixed
+
+  * Validate cumulative constraint scaling factors before pruning or scaling a row
+    or creating proxies, and record them only after row updates succeed. Rejected
+    overflow or underflow no longer leaves a scaled row with stale factor metadata.
+
 ### Added
 
   * Added `ScalingSettings.constraint_scaling_factors`, which records cumulative

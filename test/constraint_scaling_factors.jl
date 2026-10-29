@@ -2,6 +2,7 @@
 # by the package's HiGHS and optional Gurobi test environments.
 function test_constraint_scaling_factors(optimizer)
     @testset "constraint scaling factors" begin
+        test_constraint_factor_rejection()
         @testset "uniform rows and zero RHS" begin
             for set_type in (JuMP.MOI.LessThan, JuMP.MOI.GreaterThan, JuMP.MOI.EqualTo)
                 for (coefficient, rhs, expected) in ((1e8, 1e7, 0.01), (1e-8, 1e-7, 1e5), (1e8, 0.0, 0.01))
@@ -110,6 +111,118 @@ function test_constraint_scaling_factors(optimizer)
                 sensitivity = (objective_value(model) / settings.objective_scaling_factor - old_cost) / delta
                 @test sensitivity ≈ -1.0
             end
+        end
+    end
+end
+
+# A rejected cumulative multiplier must leave the row and factor consistent,
+# including on retry. Proxy creation must not happen before this validation.
+function test_rejected_constraint_factor(model, row, settings)
+    original_function = copy(constraint_object(row).func)
+    original_set = constraint_object(row).set
+    original_factors = copy(settings.constraint_scaling_factors)
+    original_proxies = Dict(variable => copy(proxies) for (variable, proxies) in settings.proxy_var_map)
+    original_variables = num_variables(model)
+    original_constraints = num_constraints(model; count_variable_in_set_constraints=true)
+    for _ in 1:2
+        @test_throws r"The cumulative constraint scaling factor must remain finite and positive" MES.scale_constraints!([row], settings)
+        @test isequal(constraint_object(row).func, original_function)
+        @test isequal(constraint_object(row).set, original_set)
+        @test settings.constraint_scaling_factors == original_factors
+        @test settings.proxy_var_map == original_proxies
+        @test num_variables(model) == original_variables
+        @test num_constraints(model; count_variable_in_set_constraints=true) == original_constraints
+    end
+end
+
+function test_constraint_factor_rejection()
+    @testset "cumulative factor validation precedes row updates" begin
+        @testset "review overflow reproduction and recovery" begin
+            model = Model()
+            @variable(model, x)
+            row = @constraint(model, 1e-300 * x <= 0.0)
+            settings = MES.ScalingSettings()
+            MES.scale_constraints!([row], settings)
+            @test normalized_coefficient(row, x) ≈ 1e-3
+            @test settings.constraint_scaling_factors[row] ≈ 1e297
+            settings.coeff_lb = 1e10
+            settings.coeff_ub = 1e20
+            test_rejected_constraint_factor(model, row, settings)
+            settings.coeff_lb = 1e-3
+            settings.coeff_ub = 1e6
+            @test MES.scale_constraints!([row], settings) === nothing
+            @test normalized_coefficient(row, x) ≈ 1e-3
+        end
+
+        # Seed a finite existing factor near a Float64 limit to exercise each
+        # scaling path without depending on a long history of transformations.
+        @testset "successful scaling still prunes coefficients" begin
+            model = Model()
+            @variable(model, x)
+            @variable(model, y)
+            row = @constraint(model, 1e8 * x + 1e-20 * y <= 1e7)
+            settings = MES.ScalingSettings(constraint_min_coeff=1e-9)
+            MES.scale_constraints!([row], settings)
+            @test normalized_coefficient(row, x) ≈ 1e6
+            @test normalized_coefficient(row, y) == 0.0
+            @test normalized_rhs(row) ≈ 1e5
+            @test settings.constraint_scaling_factors[row] ≈ 0.01
+        end
+        @testset "uniform increase overflow" begin
+            model = Model()
+            @variable(model, x)
+            @variable(model, y)
+            row = @constraint(model, 1e-8 * x + 1e-20 * y <= 1e-7)
+            settings = MES.ScalingSettings(constraint_min_coeff=1e-9)
+            settings.constraint_scaling_factors[row] = floatmax(Float64)
+            test_rejected_constraint_factor(model, row, settings)
+        end
+        @testset "uniform decrease underflow" begin
+            model = Model()
+            @variable(model, x)
+            @variable(model, y)
+            row = @constraint(model, 1e8 * x + 1e-20 * y <= 1e7)
+            settings = MES.ScalingSettings(constraint_min_coeff=1e-9)
+            settings.constraint_scaling_factors[row] = nextfloat(0.0)
+            test_rejected_constraint_factor(model, row, settings)
+        end
+        @testset "hybrid proxy increase overflow" begin
+            model = Model()
+            @variable(model, x)
+            @variable(model, y)
+            @variable(model, z)
+            row = @constraint(model, 1e3 * x + 1e-9 * y + 1e-20 * z <= 1e-6)
+            settings = MES.ScalingSettings(constraint_min_coeff=1e-12)
+            settings.constraint_scaling_factors[row] = floatmax(Float64)
+            test_rejected_constraint_factor(model, row, settings)
+        end
+        @testset "hybrid proxy decrease underflow" begin
+            model = Model()
+            @variable(model, x)
+            @variable(model, y)
+            @variable(model, z)
+            row = @constraint(model, 1e9 * x + 1e-4 * y + 1e-20 * z <= 1e9)
+            settings = MES.ScalingSettings(constraint_min_coeff=1e-9)
+            settings.constraint_scaling_factors[row] = nextfloat(0.0)
+            test_rejected_constraint_factor(model, row, settings)
+        end
+        @testset "interval increase overflow before pruning" begin
+            model = Model()
+            @variable(model, x)
+            @variable(model, y)
+            row = @constraint(model, 1e-8 <= 1e-8 * x + 1e-20 * y <= 1e-6)
+            settings = MES.ScalingSettings(constraint_min_coeff=1e-9)
+            settings.constraint_scaling_factors[row] = floatmax(Float64)
+            test_rejected_constraint_factor(model, row, settings)
+        end
+        @testset "interval decrease underflow before proxies" begin
+            model = Model()
+            @variable(model, x)
+            @variable(model, y)
+            row = @constraint(model, 1e8 <= 1e8 * x + 1e-12 * y <= 1e9)
+            settings = MES.ScalingSettings()
+            settings.constraint_scaling_factors[row] = nextfloat(0.0)
+            test_rejected_constraint_factor(model, row, settings)
         end
     end
 end
