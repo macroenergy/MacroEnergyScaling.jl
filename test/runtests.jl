@@ -16,6 +16,7 @@ function objective_coefficient(model, variable)
 end
 
 include("direct_model_contract.jl")
+include("constraint_scaling_factors.jl")
 
 @testset "MacroEnergyScaling" begin
     @testset "scaling settings validation" begin
@@ -130,6 +131,7 @@ include("direct_model_contract.jl")
     end
 
     test_direct_model_scaling(HiGHS.Optimizer)
+    test_constraint_scaling_factors(HiGHS.Optimizer)
 
     @testset "objective scaling" begin
         no_op_model = Model()

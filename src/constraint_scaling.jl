@@ -4,6 +4,9 @@
     scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
 
 Scale the scalar-affine constraints in the model `EP` using the scaling settings `scaling_settings`.
+Cumulative uniform row multipliers are recorded in
+`scaling_settings.constraint_scaling_factors`; missing entries mean `1.0`.
+The return value remains `nothing`.
 """
 function scale_constraints!(EP::Model, scaling_settings::ScalingSettings=ScalingSettings())
     validate_scaling_settings(scaling_settings)
@@ -120,11 +123,13 @@ function scale_constraint!(con_ref::ConstraintRef, scaling_settings::ScalingSett
     if max_ratio > 1 && min_ratio < 1 && min_ratio * max_ratio < 1
         scale_constraint_terms!(con_ref, con_obj.func.terms, 1.0 / max_ratio)
         set_normalized_rhs(con_ref, rhs / max_ratio)
+        record_constraint_scaling!(con_ref, 1.0 / max_ratio, scaling_settings)
     # Else-if some coefficients are too small, and none too large
     # and multiplying by min_ratio will not make any coefficients greater than coeff_ub
     elseif min_ratio > 1 && max_ratio < 1 && max_ratio * min_ratio < 1
         scale_constraint_terms!(con_ref, con_obj.func.terms, min_ratio)
         set_normalized_rhs(con_ref, rhs * min_ratio)
+        record_constraint_scaling!(con_ref, min_ratio, scaling_settings)
     # Else we'll update the constraint with proxy variables to scale the coefficients one-by-one
     else
         scale_and_update_constraint!(con_ref, con_obj, rhs, min_coefficient, max_coefficient, scaling_settings)
@@ -160,7 +165,20 @@ function scale_constraint!(con_ref::ConstraintRef{<:AbstractModel,<:MOI.Constrai
     end
     if multiplier != 1.0
         set_interval_bounds!(con_ref, interval.lower * multiplier, interval.upper * multiplier)
+        record_constraint_scaling!(con_ref, multiplier, scaling_settings)
     end
+    return nothing
+end
+
+# Called only for non-unit row multipliers: unchanged and proxy-only rows do
+# not incur dictionary lookups or insertions.
+function record_constraint_scaling!(con_ref::ConstraintRef, multiplier::Float64, scaling_settings::ScalingSettings)
+    factors = scaling_settings.constraint_scaling_factors
+    cumulative = get(factors, con_ref, 1.0) * multiplier
+    if !isfinite(cumulative) || cumulative <= 0.0
+        error("The cumulative constraint scaling factor must remain finite and positive.")
+    end
+    factors[con_ref] = cumulative
     return nothing
 end
 
@@ -381,6 +399,7 @@ function scale_and_update_constraint!(con_ref::ConstraintRef, con_obj, rhs::Real
     scale_and_update_terms!(con_ref, con_obj, rhs_multiplier, scaling_settings)
     if rhs_multiplier != 1.0
         set_normalized_rhs(con_ref, rhs * rhs_multiplier)
+        record_constraint_scaling!(con_ref, rhs_multiplier, scaling_settings)
     end
     return nothing
 end

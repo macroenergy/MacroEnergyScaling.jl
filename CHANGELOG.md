@@ -5,6 +5,31 @@ All notable changes to MacroEnergyScaling.jl will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 project follows Julia package versioning through `Project.toml` releases.
 
+## 0.4.1 - 2026-10-29
+
+### Added
+
+  * Added `ScalingSettings.constraint_scaling_factors`, which records cumulative
+    uniform row multipliers keyed by the original `ConstraintRef`s. Missing entries
+    mean `1.0`; proxy substitutions alone do not change the row multiplier.
+  * Added dual-recovery documentation using
+    `dual(con) * get(settings.constraint_scaling_factors, con, 1.0) / settings.objective_scaling_factor`.
+    The recorded factors cover zero-RHS rows, interval constraints, and rows using
+    proxy variables, without requiring callers to infer scaling from coefficients.
+  * Added HiGHS and Gurobi tests for cumulative factors and original-unit duals,
+    including combined constraint-row and objective scaling.
+
+### Performance
+
+  * Record factors only when a non-unit uniform row multiplier is applied.
+    Unchanged and proxy-only rows incur no factor-map lookups or insertions.
+
+### Compatibility
+
+  * Scaling functions continue to return `nothing`. Pass and retain an explicit
+    `ScalingSettings` object to access the factors; existing constructor calls
+    remain supported.
+
 ## 0.4.0 - 2026-07-27
 
 ### Added
